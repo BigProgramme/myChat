@@ -1,6 +1,6 @@
 // /js/chatbot.js
 // Malongui Consulting — Chatbot Préqualification
-// Réécriture : réactions contextuelles, délais humains, ton conversationnel
+// v3 : fixes refus nom, double submit skip, message welcome, question email sans nom hostile
 
 (function () {
 
@@ -15,38 +15,32 @@
         }
     }
 
+    // ── FALLBACKS WELCOME ──────────────────────────────────────────
+    // Message d'accueil codé en dur — affiché si i18n pas encore chargé
+    const WELCOME_FALLBACK_FR = "Bonjour ! 👋 Je suis l'assistant de Malongui Consulting.\nComment puis-je vous aider aujourd'hui ?";
+    const WELCOME_FALLBACK_EN = "Hello! 👋 I'm the Malongui Consulting assistant.\nHow can I help you today?";
+
+    function getWelcomeMessage() {
+        // Essaie d'abord la traduction
+        const translated = t('welcome', null);
+        if (translated) return translated;
+        // Détecte la langue active si dispo
+        const lang = document.documentElement.lang || 'fr';
+        return lang.startsWith('en') ? WELCOME_FALLBACK_EN : WELCOME_FALLBACK_FR;
+    }
 
     // ── RÉACTIONS CONTEXTUELLES ────────────────────────────────────
-    // Déclenchées APRÈS le choix de l'utilisateur, AVANT la question suivante.
-    // Clé = nextStep vers lequel on s'apprête à aller.
-    // Plusieurs variantes → piochées au hasard pour éviter l'effet robot.
-
     const REACTIONS = {
-        // Après avoir choisi le service principal
         tax_who:         ["D'accord, on s'occupe de votre déclaration d'impôts.", "Parfait, c'est l'une de nos spécialités !"],
         compta_status:   ["Très bien, la comptabilité c'est notre cœur de métier.", "Noté — on va voir ça ensemble."],
         admin_type:      ["Pas de problème, on gère ce type de démarche régulièrement."],
         creation_step:   ["Super, la création d'entreprise c'est une belle étape ! 🎉"],
         welcome_step:    ["Bienvenue en Suisse ! On est là pour faciliter votre installation. 😊"],
         other_urgent:    ["Compris, dites-moi en un peu plus."],
-
-        // Après profil familial
         tax_kids:        ["Noté, je prends en compte votre situation."],
         tax_extra:       ["Très bien."],
-
-        // Après détails comptabilité
         compta_need:     ["D'accord, je vois exactement ce qu'il vous faut."],
-
-        // Après détails administratif
         collect_name:    ["Parfait, on y est presque !"],
-
-        // Après type de création
-        collect_name_creation: ["Excellent, on va pouvoir vous orienter précisément."],
-
-        // Après timing pack bienvenue
-        collect_name_welcome:  ["On va s'assurer que votre installation se passe bien."],
-
-        // Après urgence autre demande
         whatsapp_direct: ["Je comprends, on ne va pas perdre de temps."],
     };
 
@@ -54,58 +48,57 @@
         return arr[Math.floor(Math.random() * arr.length)];
     }
 
-    // Délai proportionnel à la longueur du message — effet frappe humain
     function typingDelay(text) {
         return Math.min(400 + (text ? text.length * 18 : 0), 2000);
     }
 
+    // Détecte si la saisie est un refus / donnée fantaisiste
+    function isRefusal(val) {
+        return /^(non|no|rien|skip|pass|nope|je ne veux pas|pas envie|anonyme|inconnu|-|\.+|x+|azerty|test)$/i.test(val.trim());
+    }
+
 
     // ── FLOW ───────────────────────────────────────────────────────
-
     const CHAT_FLOW = {
         welcome: {
             messageKey: 'welcome',
             options: [
-                { textKey: 'opt_tax',      nextStep: 'tax_who',        value: 'Déclaration d\'impôt',          icon: 'file-text'   },
-                { textKey: 'opt_compta',   nextStep: 'compta_status',  value: 'Comptabilité',                  icon: 'bar-chart-2' },
-                { textKey: 'opt_admin',    nextStep: 'admin_type',     value: 'Accompagnement administratif',  icon: 'pen-tool'    },
-                { textKey: 'opt_creation', nextStep: 'creation_step',  value: 'Création d\'entreprise',        icon: 'briefcase'   },
-                { textKey: 'opt_welcome',  nextStep: 'welcome_step',   value: 'Pack Bienvenue',                icon: 'globe'       },
-                { textKey: 'opt_other',    nextStep: 'other_urgent',   value: 'Autre demande',                 icon: 'help-circle' },
+                { textKey: 'opt_tax',      nextStep: 'tax_who',        value: "Déclaration d'impôt",         icon: 'file-text'   },
+                { textKey: 'opt_compta',   nextStep: 'compta_status',  value: 'Comptabilité',                icon: 'bar-chart-2' },
+                { textKey: 'opt_admin',    nextStep: 'admin_type',     value: 'Accompagnement administratif',icon: 'pen-tool'    },
+                { textKey: 'opt_creation', nextStep: 'creation_step',  value: "Création d'entreprise",       icon: 'briefcase'   },
+                { textKey: 'opt_welcome',  nextStep: 'welcome_step',   value: 'Pack Bienvenue',              icon: 'globe'       },
+                { textKey: 'opt_other',    nextStep: 'other_urgent',   value: 'Autre demande',               icon: 'help-circle' },
             ]
         },
-
-        // Impôts
         tax_who: {
             messageKey: 'q_tax_who',
             options: [
-                { textKey: 'opt_single', nextStep: 'tax_kids', value: 'Personne seule',  icon: 'user'  },
-                { textKey: 'opt_couple', nextStep: 'tax_kids', value: 'Couple marié',    icon: 'users' },
+                { textKey: 'opt_single', nextStep: 'tax_kids', value: 'Personne seule', icon: 'user'  },
+                { textKey: 'opt_couple', nextStep: 'tax_kids', value: 'Couple marié',   icon: 'users' },
             ]
         },
         tax_kids: {
             messageKey: 'q_tax_kids',
             options: [
-                { textKey: 'opt_yes', nextStep: 'tax_extra', value: 'Avec enfants mineurs',  icon: 'check' },
-                { textKey: 'opt_no',  nextStep: 'tax_extra', value: 'Sans enfant mineur',    icon: 'minus' },
+                { textKey: 'opt_yes', nextStep: 'tax_extra', value: 'Avec enfants mineurs', icon: 'check' },
+                { textKey: 'opt_no',  nextStep: 'tax_extra', value: 'Sans enfant mineur',   icon: 'minus' },
             ]
         },
         tax_extra: {
             messageKey: 'q_tax_extra',
             options: [
-                { textKey: 'opt_real_estate', nextStep: 'collect_name', value: 'Propriété immobilière', icon: 'home'       },
-                { textKey: 'opt_securities',  nextStep: 'collect_name', value: 'Titres ou placements',  icon: 'trending-up'},
-                { textKey: 'opt_none',        nextStep: 'collect_name', value: 'Rien de particulier',   icon: 'circle'     },
+                { textKey: 'opt_real_estate', nextStep: 'collect_name', value: 'Propriété immobilière', icon: 'home'        },
+                { textKey: 'opt_securities',  nextStep: 'collect_name', value: 'Titres ou placements',  icon: 'trending-up' },
+                { textKey: 'opt_none',        nextStep: 'collect_name', value: 'Rien de particulier',   icon: 'circle'      },
             ]
         },
-
-        // Comptabilité
         compta_status: {
             messageKey: 'q_compta_status',
             options: [
-                { textKey: 'opt_independent', nextStep: 'compta_need', value: 'Indépendant',               icon: 'user'        },
-                { textKey: 'opt_company',     nextStep: 'compta_need', value: 'Société Sàrl/SA',           icon: 'briefcase'   },
-                { textKey: 'opt_creating',    nextStep: 'compta_need', value: 'En cours de création/Autre',icon: 'plus-circle' },
+                { textKey: 'opt_independent', nextStep: 'compta_need', value: 'Indépendant',                icon: 'user'        },
+                { textKey: 'opt_company',     nextStep: 'compta_need', value: 'Société Sàrl/SA',            icon: 'briefcase'   },
+                { textKey: 'opt_creating',    nextStep: 'compta_need', value: 'En cours de création/Autre', icon: 'plus-circle' },
             ]
         },
         compta_need: {
@@ -116,8 +109,6 @@
                 { textKey: 'opt_vat_advice',       nextStep: 'collect_name', value: 'TVA / Conseils', icon: 'percent'    },
             ]
         },
-
-        // Administratif
         admin_type: {
             messageKey: 'q_admin_type',
             options: [
@@ -126,8 +117,6 @@
                 { textKey: 'opt_disputes', nextStep: 'collect_name', value: 'Litige / correspondance', icon: 'alert-triangle' },
             ]
         },
-
-        // Création entreprise
         creation_step: {
             messageKey: 'q_creation_step',
             options: [
@@ -135,17 +124,13 @@
                 { textKey: 'opt_ready',  nextStep: 'collect_name', value: 'Prêt à rédiger statuts', icon: 'edit'        },
             ]
         },
-
-        // Pack bienvenue
         welcome_step: {
             messageKey: 'q_welcome_step',
             options: [
-                { textKey: 'opt_already_here',  nextStep: 'collect_name', value: 'Récemment installé', icon: 'map-pin'  },
-                { textKey: 'opt_coming_soon',   nextStep: 'collect_name', value: 'Installation future',icon: 'calendar' },
+                { textKey: 'opt_already_here', nextStep: 'collect_name', value: 'Récemment installé',  icon: 'map-pin'  },
+                { textKey: 'opt_coming_soon',  nextStep: 'collect_name', value: 'Installation future', icon: 'calendar' },
             ]
         },
-
-        // Autre demande
         other_urgent: {
             messageKey: 'q_other_urgent',
             options: [
@@ -155,18 +140,19 @@
         },
     };
 
-    let currentState = 'welcome';
+    let currentState  = 'welcome';
     let userInputData = { name: '', email: '', message: '', service: '', details: [] };
     let chatWindowOpen = false;
+    // Verrou anti double-submit (skip + saisie libre simultanés)
+    let inputLocked   = false;
 
 
     // ── I18N ───────────────────────────────────────────────────────
-
     function t(key, fallback) {
         if (window.currentTranslations?.chatbot?.[key]) {
             return window.currentTranslations.chatbot[key];
         }
-        return fallback || key;
+        return (fallback !== undefined) ? fallback : null;
     }
 
     function formatString(str, params) {
@@ -177,7 +163,6 @@
 
 
     // ── DOM INIT ───────────────────────────────────────────────────
-
     function initDOM() {
         if (document.getElementById('chatbot-root')) return;
 
@@ -232,23 +217,23 @@
     }
 
     function toggleChatWindow(forceState) {
-        const win     = document.querySelector('.chatbot-window');
-        const trigger = document.querySelector('.chatbot-trigger');
-        const iconN   = trigger.querySelector('.chatbot-icon');
-        const iconC   = trigger.querySelector('.chatbot-close-icon');
+        const win   = document.querySelector('.chatbot-window');
+        const trig  = document.querySelector('.chatbot-trigger');
+        const iconN = trig.querySelector('.chatbot-icon');
+        const iconC = trig.querySelector('.chatbot-close-icon');
 
         chatWindowOpen = typeof forceState === 'boolean' ? forceState : !chatWindowOpen;
 
         if (chatWindowOpen) {
             win.classList.remove('hidden');
-            trigger.classList.add('active');
+            trig.classList.add('active');
             iconN.classList.add('hidden');
             iconC.classList.remove('hidden');
             const ic = document.querySelector('.chatbot-input-container');
             if (!ic.classList.contains('hidden')) document.querySelector('.chatbot-input-field').focus();
         } else {
             win.classList.add('hidden');
-            trigger.classList.remove('active');
+            trig.classList.remove('active');
             iconN.classList.remove('hidden');
             iconC.classList.add('hidden');
         }
@@ -256,6 +241,7 @@
 
     function restartConversation() {
         currentState  = 'welcome';
+        inputLocked   = false;
         userInputData = { name: '', email: '', message: '', service: '', details: [] };
         const inner   = document.querySelector('.chatbot-messages-inner');
         if (inner) { inner.innerHTML = ''; runStep(); }
@@ -263,13 +249,13 @@
 
 
     // ── AFFICHAGE ──────────────────────────────────────────────────
-
     function addMessage(text, isBot = true) {
         const inner = document.querySelector('.chatbot-messages-inner');
         if (!inner) return;
         const msg = document.createElement('div');
         msg.className = `chat-msg ${isBot ? 'msg-bot' : 'msg-user'}`;
-        msg.innerHTML = `<div class="chat-msg-bubble">${text}</div>`;
+        // Gère les sauts de ligne dans les messages codés en dur
+        msg.innerHTML = `<div class="chat-msg-bubble">${text.replace(/\n/g, '<br>')}</div>`;
         inner.appendChild(msg);
         scrollBottom();
     }
@@ -309,15 +295,28 @@
         }, delay);
     }
 
-    // Affiche une réaction puis enchaîne (optionnel)
+    // Affiche une réaction contextuelle puis enchaîne
     function reactThen(reactionKey, then) {
         const variants = REACTIONS[reactionKey];
         if (variants && variants.length) {
             botSay(pick(variants), then);
         } else {
-            // Pas de réaction définie → on enchaîne directement après un léger délai
             setTimeout(then, 300);
         }
+    }
+
+    function lockInput() {
+        inputLocked = true;
+        const ic    = document.querySelector('.chatbot-input-container');
+        const input = document.querySelector('.chatbot-input-field');
+        if (ic)    ic.classList.add('hidden');
+        if (input) input.disabled = true;
+    }
+
+    function unlockInput() {
+        inputLocked = false;
+        const input = document.querySelector('.chatbot-input-field');
+        if (input) input.disabled = false;
     }
 
     function showOptions(options) {
@@ -337,11 +336,9 @@
                 const label = t(opt.textKey, opt.value);
                 addMessage(label, false);
 
-                // Sauvegarde des données
                 if (currentState === 'welcome') userInputData.service = opt.value;
                 else if (opt.value) userInputData.details.push(opt.value);
 
-                // Réaction contextuelle → puis étape suivante
                 currentState = opt.nextStep;
                 reactThen(opt.nextStep, () => setTimeout(runStep, 300));
             });
@@ -356,36 +353,50 @@
 
 
     // ── MOTEUR DE FLOW ─────────────────────────────────────────────
-
     function runStep() {
         const flow = CHAT_FLOW[currentState];
-        const ic   = document.querySelector('.chatbot-input-container');
-        ic.classList.add('hidden');
+        lockInput();
 
         if (!flow) {
-            // États spéciaux (saisie libre / actions)
             if      (currentState === 'collect_name')    showTextInput('q_collect_name');
-            else if (currentState === 'collect_email')   showTextInput('q_collect_email', { name: userInputData.name });
-            else if (currentState === 'collect_message') showTextInput('q_collect_message', null, true);
+            else if (currentState === 'collect_email')   showTextInput('q_collect_email');
+            else if (currentState === 'collect_message') showTextInput('q_collect_message', true);
             else if (currentState === 'whatsapp_direct') handleUrgentWhatsApp();
             else if (currentState === 'submit_data')     handleSubmitData();
             return;
         }
 
-        const msgText = t(flow.messageKey, '...');
-        botSay(msgText, () => {
+        // FIX : message welcome : utilise getWelcomeMessage() si clé 'welcome'
+        const rawText = currentState === 'welcome'
+            ? getWelcomeMessage()
+            : t(flow.messageKey, '...');
+
+        botSay(rawText, () => {
             if (flow.options?.length) showOptions(flow.options);
         });
     }
 
-    function showTextInput(messageKey, params = null, withSkip = false) {
+    function showTextInput(messageKey, withSkip = false) {
         const ic    = document.querySelector('.chatbot-input-container');
         const input = document.querySelector('.chatbot-input-field');
 
-        let msgText = t(messageKey, '...');
-        if (params) msgText = formatString(msgText, params);
+        // FIX : question email — ne jamais inclure le nom dans le message
+        // si le nom est vide (refus) ou absent
+        let msgText;
+        if (messageKey === 'q_collect_email') {
+            const hasName = userInputData.name && userInputData.name.trim().length > 0;
+            if (hasName) {
+                msgText = t('q_collect_email', `Merci ${userInputData.name} ! À quelle adresse e-mail souhaitez-vous recevoir notre réponse ?`);
+                msgText = formatString(msgText, { name: userInputData.name });
+            } else {
+                msgText = t('q_collect_email_anon', 'À quelle adresse e-mail souhaitez-vous recevoir notre réponse ?');
+            }
+        } else {
+            msgText = t(messageKey, '...');
+        }
 
         botSay(msgText, () => {
+            unlockInput();
             ic.classList.remove('hidden');
             input.value       = '';
             input.placeholder = t('placeholder', 'Écrivez ici...');
@@ -399,13 +410,18 @@
                 const skipBtn = document.createElement('button');
                 skipBtn.className = 'chat-opt-btn';
                 skipBtn.innerHTML = `<i data-lucide="corner-down-right"></i><span>${t('opt_nothing_to_add', 'Rien à ajouter')}</span>`;
+
                 skipBtn.addEventListener('click', () => {
+                    if (inputLocked) return;   // FIX : verrou anti double-submit
                     wrap.remove();
+                    lockInput();               // FIX : verrouille IMMÉDIATEMENT
                     addMessage(t('opt_nothing_to_add', 'Rien à ajouter'), false);
                     userInputData.message = '';
                     currentState = 'submit_data';
-                    ic.classList.add('hidden');
-                    setTimeout(runStep, 400);
+                    setTimeout(() => {
+                        unlockInput();
+                        runStep();
+                    }, 400);
                 });
 
                 wrap.appendChild(skipBtn);
@@ -417,32 +433,46 @@
     }
 
     function handleTextInputSubmit() {
+        if (inputLocked) return;   // FIX : verrou anti double-submit
+
         const ic    = document.querySelector('.chatbot-input-container');
         const input = document.querySelector('.chatbot-input-field');
         const val   = input.value.trim();
         if (!val) return;
 
-        ic.classList.add('hidden');
+        lockInput();
         addMessage(val, false);
 
         if (currentState === 'collect_name') {
-            userInputData.name = val;
-            // Réaction personnalisée avec le prénom
-            const reaction = `Enchanté, ${val} ! 😊`;
-            currentState = 'collect_email';
-            botSay(reaction, () => setTimeout(runStep, 300));
+
+            // FIX : détection refus / saisie hostile
+            if (isRefusal(val)) {
+                userInputData.name = '';
+                botSay("Pas de problème, on continue sans votre nom.", () => {
+                    currentState = 'collect_email';
+                    setTimeout(runStep, 300);
+                });
+            } else {
+                userInputData.name = val;
+                // Utilise juste le premier mot comme prénom (évite "Enchanté, Jean-Paul Dupont !")
+                const prenom = val.split(' ')[0];
+                botSay(`Enchanté, ${prenom} ! 😊`, () => {
+                    currentState = 'collect_email';
+                    setTimeout(runStep, 300);
+                });
+            }
 
         } else if (currentState === 'collect_email') {
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-                botSay(t('invalid_email', 'Hmm, cette adresse email ne semble pas valide. Pouvez-vous la vérifier ?'), () => {
+                botSay(t('invalid_email', 'Hmm, cette adresse e-mail ne semble pas valide. Pouvez-vous la vérifier ?'), () => {
+                    unlockInput();
                     ic.classList.remove('hidden');
                     input.focus();
                 });
             } else {
                 userInputData.email = val;
                 currentState = 'collect_message';
-                // Réaction à l'email
-                botSay(t('ack_email', 'Noté !'), () => setTimeout(runStep, 300));
+                botSay(t('ack_email', 'Reçu !'), () => setTimeout(runStep, 300));
             }
 
         } else if (currentState === 'collect_message') {
@@ -454,9 +484,8 @@
 
 
     // ── CAS SPÉCIAUX ───────────────────────────────────────────────
-
     function handleUrgentWhatsApp() {
-        const msg = t('urgent_wa_msg', 'Puisque votre demande est urgente, contactez-nous directement sur WhatsApp — on vous répond dans les plus brefs délais :');
+        const msg = t('urgent_wa_msg', "Puisque votre demande est urgente, contactez-nous directement sur WhatsApp — on vous répond dans les plus brefs délais :");
         botSay(msg, () => {
             const inner = document.querySelector('.chatbot-messages-inner');
             const wrap  = document.createElement('div');
@@ -464,7 +493,7 @@
 
             const waBtn = document.createElement('a');
             waBtn.className = 'chat-opt-btn cta-whatsapp-link';
-            waBtn.href      = 'https://wa.me/41783535360?text=Bonjour%2C%20j\'ai%20une%20demande%20urgente%20concernant%20vos%20services.';
+            waBtn.href      = "https://wa.me/41783535360?text=Bonjour%2C%20j'ai%20une%20demande%20urgente%20concernant%20vos%20services.";
             waBtn.target    = '_blank';
             waBtn.innerHTML = `${whatsappSVG}<span>${t('cta_whatsapp', 'Discuter sur WhatsApp')}</span>`;
             wrap.appendChild(waBtn);
@@ -475,37 +504,41 @@
     }
 
     function handleSubmitData() {
-        const serviceName  = userInputData.service;
-        const subchoices   = userInputData.details.join(' / ');
-        const customMsg    = userInputData.message || '(Aucun commentaire)';
-        const subjectLine  = `[Chat Malongui] ${serviceName}${subchoices ? ' — ' + subchoices : ''}`;
-        const messageBody  = `[Message venant du chat Malongui]\n\nProfil : ${serviceName} / ${subchoices || 'Général'}\nCommentaire : "${customMsg}"`;
+        const serviceName = userInputData.service;
+        const subchoices  = userInputData.details.join(' / ');
+        const customMsg   = userInputData.message || '(Aucun commentaire)';
+        const subjectLine = `[Chat Malongui] ${serviceName}${subchoices ? ' — ' + subchoices : ''}`;
+        const messageBody = `[Message venant du chat Malongui]\n\nProfil : ${serviceName} / ${subchoices || 'Général'}\nCommentaire : "${customMsg}"`;
 
-        botSay(t('sending', 'Parfait, j\'envoie votre demande…'), () => {
+        botSay(t('sending', "Parfait, j'envoie votre demande…"), () => {
             const contactForm = document.getElementById('contact-form');
             if (contactForm) {
-                const nameInput      = document.getElementById('form-name');
-                const emailInput     = document.getElementById('form-email');
-                const subjectSelect  = document.getElementById('form-subject');
-                const msgTextarea    = document.getElementById('form-message');
+                const nameInput     = document.getElementById('form-name');
+                const emailInput    = document.getElementById('form-email');
+                const subjectSelect = document.getElementById('form-subject');
+                const msgTextarea   = document.getElementById('form-message');
 
-                if (nameInput)    nameInput.value    = userInputData.name;
-                if (emailInput)   emailInput.value   = userInputData.email;
-                if (msgTextarea)  msgTextarea.value  = messageBody;
+                if (nameInput)   nameInput.value   = userInputData.name;
+                if (emailInput)  emailInput.value  = userInputData.email;
+                if (msgTextarea) msgTextarea.value = messageBody;
 
                 if (subjectSelect) {
-                    if (serviceName.includes('impôt') || serviceName.includes('Tax'))         subjectSelect.value = 'impots';
-                    else if (serviceName.includes('Compta') || serviceName.includes('Acc'))   subjectSelect.value = 'comptabilite';
-                    else if (serviceName.includes('admin') || serviceName.includes('Admin'))  subjectSelect.value = 'admin';
-                    else                                                                       subjectSelect.value = 'autre';
+                    if (serviceName.includes('impôt') || serviceName.includes('Tax'))        subjectSelect.value = 'impots';
+                    else if (serviceName.includes('Compta') || serviceName.includes('Acc'))  subjectSelect.value = 'comptabilite';
+                    else if (serviceName.includes('admin') || serviceName.includes('Admin')) subjectSelect.value = 'admin';
+                    else                                                                      subjectSelect.value = 'autre';
                 }
 
                 const submitBtn = document.getElementById('form-submit-btn');
                 if (submitBtn) submitBtn.click();
                 else contactForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
             } else {
-                // Mode simulation (pages sans formulaire)
-                console.log('Chatbot lead:', { name: userInputData.name, email: userInputData.email, subject: subjectLine, message: messageBody });
+                console.log('Chatbot lead:', {
+                    name: userInputData.name,
+                    email: userInputData.email,
+                    subject: subjectLine,
+                    message: messageBody
+                });
             }
 
             setTimeout(showFinalSuccess, 1800);
@@ -513,50 +546,56 @@
     }
 
     function showFinalSuccess() {
-        // Retire le "j'envoie..."
         const inner   = document.querySelector('.chatbot-messages-inner');
         const lastMsg = inner?.lastChild;
         if (lastMsg?.textContent?.includes('envoie')) lastMsg.remove();
 
-        // Message de confirmation chaleureux
-        const successMsg = t('success', `Votre demande a bien été envoyée, ${userInputData.name || ''} ! 🎉 On revient vers vous très rapidement.`);
-        botSay(successMsg.replace('{name}', userInputData.name || ''), () => {
-            // Message de suivi
-            botSay(t('success_follow', 'En attendant, vous pouvez aussi réserver directement un créneau ou nous écrire sur WhatsApp :'), () => {
-                const wrap = document.createElement('div');
-                wrap.className = 'chatbot-options chatbot-final-ctas';
+        // Message personnalisé si on a le nom, générique sinon
+        const hasName    = userInputData.name && userInputData.name.trim().length > 0;
+        const prenom     = hasName ? userInputData.name.split(' ')[0] : '';
+        const successMsg = hasName
+            ? t('success', `Votre demande a bien été envoyée, ${prenom} ! 🎉 On revient vers vous très rapidement.`)
+            : t('success_anon', "Votre demande a bien été envoyée ! 🎉 On revient vers vous très rapidement.");
 
-                const bookBtn = document.createElement('a');
-                bookBtn.className = 'chat-opt-btn cta-booking-link';
-                bookBtn.href      = 'https://outlook.office.com/book/Rservationderendezvous@malongui.ch/';
-                bookBtn.target    = '_blank';
-                bookBtn.innerHTML = `<i data-lucide="calendar"></i><span>${t('cta_booking', 'Prendre rendez-vous')}</span>`;
+        botSay(successMsg.replace('{name}', prenom), () => {
+            botSay(
+                t('success_follow', 'En attendant, vous pouvez aussi réserver un créneau ou nous écrire sur WhatsApp :'),
+                () => {
+                    const wrap = document.createElement('div');
+                    wrap.className = 'chatbot-options chatbot-final-ctas';
 
-                const waBtn = document.createElement('a');
-                waBtn.className = 'chat-opt-btn cta-whatsapp-link';
-                waBtn.href      = 'https://wa.me/41783535360?text=Bonjour%2C%20je%20viens%20d\'envoyer%20un%20message%20via%20le%20chatbot.';
-                waBtn.target    = '_blank';
-                waBtn.innerHTML = `${whatsappSVG}<span>${t('cta_whatsapp', 'Discuter sur WhatsApp')}</span>`;
+                    const bookBtn = document.createElement('a');
+                    bookBtn.className = 'chat-opt-btn cta-booking-link';
+                    bookBtn.href      = 'https://outlook.office.com/book/Rservationderendezvous@malongui.ch/';
+                    bookBtn.target    = '_blank';
+                    bookBtn.innerHTML = `<i data-lucide="calendar"></i><span>${t('cta_booking', 'Prendre rendez-vous')}</span>`;
 
-                wrap.appendChild(bookBtn);
-                wrap.appendChild(waBtn);
-                inner.appendChild(wrap);
-                updateLucideIcons();
-                scrollBottom();
-            }, 400);
+                    const waBtn = document.createElement('a');
+                    waBtn.className = 'chat-opt-btn cta-whatsapp-link';
+                    waBtn.href      = "https://wa.me/41783535360?text=Bonjour%2C%20je%20viens%20d'envoyer%20un%20message%20via%20le%20chatbot.";
+                    waBtn.target    = '_blank';
+                    waBtn.innerHTML = `${whatsappSVG}<span>${t('cta_whatsapp', 'Discuter sur WhatsApp')}</span>`;
+
+                    wrap.appendChild(bookBtn);
+                    wrap.appendChild(waBtn);
+                    inner.appendChild(wrap);
+                    updateLucideIcons();
+                    scrollBottom();
+                },
+                400
+            );
         });
     }
 
 
     // ── BOOT ───────────────────────────────────────────────────────
-
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initDOM);
     } else {
         initDOM();
     }
 
-    setTimeout(initDOM, 500); // fallback i18n tardif
+    setTimeout(initDOM, 500); // fallback si i18n chargé après le script
 
     window.resetChatbot = restartConversation;
 

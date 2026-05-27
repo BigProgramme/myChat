@@ -1,6 +1,6 @@
 // /js/chatbot.js
 // Malongui Consulting — Chatbot Préqualification
-// v3 : fixes refus nom, double submit skip, message welcome, question email sans nom hostile
+// v4 : input toujours visible + NLP libre à tout moment du flow
 
 (function () {
 
@@ -15,19 +15,104 @@
         }
     }
 
-    // ── FALLBACKS WELCOME ──────────────────────────────────────────
-    // Message d'accueil codé en dur — affiché si i18n pas encore chargé
+
+    // ── WELCOME FALLBACK ───────────────────────────────────────────
     const WELCOME_FALLBACK_FR = "Bonjour ! 👋 Je suis l'assistant de Malongui Consulting.\nComment puis-je vous aider aujourd'hui ?";
     const WELCOME_FALLBACK_EN = "Hello! 👋 I'm the Malongui Consulting assistant.\nHow can I help you today?";
 
     function getWelcomeMessage() {
-        // Essaie d'abord la traduction
         const translated = t('welcome', null);
         if (translated) return translated;
-        // Détecte la langue active si dispo
         const lang = document.documentElement.lang || 'fr';
         return lang.startsWith('en') ? WELCOME_FALLBACK_EN : WELCOME_FALLBACK_FR;
     }
+
+
+    // ── NLP LIBRE ─────────────────────────────────────────────────
+    // Interprète la saisie libre à N'IMPORTE QUEL moment du flow.
+    // Retourne { action, nextStep } ou null si rien de reconnu.
+
+    const NLP_RULES = [
+        // Intention → impôts
+        {
+            pattern: /imp[oô]t|d[eé]clar|fiscal|tax|2[0-9]{3}/i,
+            action: () => {
+                userInputData.service = "Déclaration d'impôt";
+                currentState = 'tax_who';
+            },
+            ack: ["Je vois, vous avez une question sur les impôts. Laissez-moi vous orienter.", "Bien, on s'occupe de votre déclaration d'impôts !"]
+        },
+        // Intention → comptabilité
+        {
+            pattern: /compta|comptab|bilan|tva|tvA|livres? de compte|bouclements?/i,
+            action: () => {
+                userInputData.service = 'Comptabilité';
+                currentState = 'compta_status';
+            },
+            ack: ["Comptabilité, très bien — je vous guide.", "C'est notre cœur de métier, on va trouver la bonne formule."]
+        },
+        // Intention → création entreprise
+        {
+            pattern: /cr[eé]er?|cr[eé]ation|entreprise|sàrl|sarl|\bsa\b|statuts?|lancer/i,
+            action: () => {
+                userInputData.service = "Création d'entreprise";
+                currentState = 'creation_step';
+            },
+            ack: ["Création d'entreprise — excellente démarche ! 🎉", "Super, la création c'est une belle étape !"]
+        },
+        // Intention → frontalier / bienvenue
+        {
+            pattern: /frontalier|frontal|permis\s*g|arriv[eé]|install|bienvenue|nouveau/i,
+            action: () => {
+                userInputData.service = 'Pack Bienvenue';
+                currentState = 'welcome_step';
+            },
+            ack: ["Bienvenue ! On est là pour faciliter votre installation. 😊", "Pas de souci, on s'occupe de tout pour les nouveaux arrivants."]
+        },
+        // Intention → administratif
+        {
+            pattern: /courrier|lettre|formulaire|admin|d[eé]marche|contester?|litige|r[eé]clam/i,
+            action: () => {
+                userInputData.service = 'Accompagnement administratif';
+                currentState = 'admin_type';
+            },
+            ack: ["On gère ce type de démarche régulièrement.", "Pas de problème, je vous oriente sur les démarches administratives."]
+        },
+        // Intention → urgence
+        {
+            pattern: /urgent|rapidement|vite|d[eè]s que possible|asap|délai/i,
+            action: () => { currentState = 'whatsapp_direct'; },
+            ack: ["Je comprends l'urgence — on va aller directement à l'essentiel.", "Pas de panique, on s'en occupe."]
+        },
+        // Intention → contact direct
+        {
+            pattern: /appel|t[eé]l[eé]phone|whatsapp|rappeler|parler|contact/i,
+            action: () => { currentState = 'whatsapp_direct'; },
+            ack: ["Bien sûr, je vous mets en contact direct avec l'équipe.", "Absolument, voici comment nous joindre rapidement."]
+        },
+        // Bonjour / salutation → on reste au welcome
+        {
+            pattern: /^(bonjour|salut|hello|coucou|bonsoir|hi\b|hey\b)/i,
+            action: () => { currentState = 'welcome'; },
+            ack: ["Bonjour ! 😊 Dites-moi, qu'est-ce qui vous amène ?", "Bonjour ! Comment puis-je vous aider ?"]
+        },
+    ];
+
+    // Tente de reconnaître l'intention dans le texte libre
+    // Retourne { ack, action } ou null
+    function detectFreeIntent(text) {
+        for (const rule of NLP_RULES) {
+            if (rule.pattern.test(text)) {
+                return { ack: pick(rule.ack), action: rule.action };
+            }
+        }
+        return null;
+    }
+
+    // États où l'input libre EST déjà attendu structurellement
+    // (nom, email, message) — on ne passe pas par le NLP dans ces états
+    const STRUCTURED_INPUT_STATES = ['collect_name', 'collect_email', 'collect_message'];
+
 
     // ── RÉACTIONS CONTEXTUELLES ────────────────────────────────────
     const REACTIONS = {
@@ -44,15 +129,8 @@
         whatsapp_direct: ["Je comprends, on ne va pas perdre de temps."],
     };
 
-    function pick(arr) {
-        return arr[Math.floor(Math.random() * arr.length)];
-    }
-
-    function typingDelay(text) {
-        return Math.min(400 + (text ? text.length * 18 : 0), 2000);
-    }
-
-    // Détecte si la saisie est un refus / donnée fantaisiste
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+    function typingDelay(text) { return Math.min(400 + (text ? text.length * 18 : 0), 2000); }
     function isRefusal(val) {
         return /^(non|no|rien|skip|pass|nope|je ne veux pas|pas envie|anonyme|inconnu|-|\.+|x+|azerty|test)$/i.test(val.trim());
     }
@@ -63,12 +141,12 @@
         welcome: {
             messageKey: 'welcome',
             options: [
-                { textKey: 'opt_tax',      nextStep: 'tax_who',        value: "Déclaration d'impôt",         icon: 'file-text'   },
-                { textKey: 'opt_compta',   nextStep: 'compta_status',  value: 'Comptabilité',                icon: 'bar-chart-2' },
-                { textKey: 'opt_admin',    nextStep: 'admin_type',     value: 'Accompagnement administratif',icon: 'pen-tool'    },
-                { textKey: 'opt_creation', nextStep: 'creation_step',  value: "Création d'entreprise",       icon: 'briefcase'   },
-                { textKey: 'opt_welcome',  nextStep: 'welcome_step',   value: 'Pack Bienvenue',              icon: 'globe'       },
-                { textKey: 'opt_other',    nextStep: 'other_urgent',   value: 'Autre demande',               icon: 'help-circle' },
+                { textKey: 'opt_tax',      nextStep: 'tax_who',        value: "Déclaration d'impôt",          icon: 'file-text'   },
+                { textKey: 'opt_compta',   nextStep: 'compta_status',  value: 'Comptabilité',                 icon: 'bar-chart-2' },
+                { textKey: 'opt_admin',    nextStep: 'admin_type',     value: 'Accompagnement administratif', icon: 'pen-tool'    },
+                { textKey: 'opt_creation', nextStep: 'creation_step',  value: "Création d'entreprise",        icon: 'briefcase'   },
+                { textKey: 'opt_welcome',  nextStep: 'welcome_step',   value: 'Pack Bienvenue',               icon: 'globe'       },
+                { textKey: 'opt_other',    nextStep: 'other_urgent',   value: 'Autre demande',                icon: 'help-circle' },
             ]
         },
         tax_who: {
@@ -120,8 +198,8 @@
         creation_step: {
             messageKey: 'q_creation_step',
             options: [
-                { textKey: 'opt_advice', nextStep: 'collect_name', value: 'Besoin de conseils',      icon: 'help-circle' },
-                { textKey: 'opt_ready',  nextStep: 'collect_name', value: 'Prêt à rédiger statuts', icon: 'edit'        },
+                { textKey: 'opt_advice', nextStep: 'collect_name', value: 'Besoin de conseils',       icon: 'help-circle' },
+                { textKey: 'opt_ready',  nextStep: 'collect_name', value: 'Prêt à rédiger statuts',  icon: 'edit'        },
             ]
         },
         welcome_step: {
@@ -140,21 +218,17 @@
         },
     };
 
-    let currentState  = 'welcome';
-    let userInputData = { name: '', email: '', message: '', service: '', details: [] };
+    let currentState   = 'welcome';
+    let userInputData  = { name: '', email: '', message: '', service: '', details: [] };
     let chatWindowOpen = false;
-    // Verrou anti double-submit (skip + saisie libre simultanés)
-    let inputLocked   = false;
+    let inputLocked    = false;
 
 
     // ── I18N ───────────────────────────────────────────────────────
     function t(key, fallback) {
-        if (window.currentTranslations?.chatbot?.[key]) {
-            return window.currentTranslations.chatbot[key];
-        }
+        if (window.currentTranslations?.chatbot?.[key]) return window.currentTranslations.chatbot[key];
         return (fallback !== undefined) ? fallback : null;
     }
-
     function formatString(str, params) {
         let result = str;
         for (const key in params) result = result.replace(`{${key}}`, params[key]);
@@ -189,8 +263,9 @@
                 <div class="chatbot-messages">
                     <div class="chatbot-messages-inner"></div>
                 </div>
-                <div class="chatbot-input-container hidden">
-                    <input type="text" class="chatbot-input-field" placeholder="Écrivez ici...">
+                <!-- INPUT TOUJOURS VISIBLE -->
+                <div class="chatbot-input-container">
+                    <input type="text" class="chatbot-input-field" placeholder="Écrivez votre message…">
                     <button class="chatbot-send-btn" aria-label="Envoyer">
                         <i data-lucide="send"></i>
                     </button>
@@ -209,7 +284,7 @@
 
         window._updateChatbot = () => {
             const f = document.querySelector('.chatbot-input-field');
-            if (f) f.placeholder = t('placeholder', 'Écrivez ici...');
+            if (f) f.placeholder = t('placeholder', 'Écrivez votre message…');
             restartConversation();
         };
 
@@ -229,8 +304,7 @@
             trig.classList.add('active');
             iconN.classList.add('hidden');
             iconC.classList.remove('hidden');
-            const ic = document.querySelector('.chatbot-input-container');
-            if (!ic.classList.contains('hidden')) document.querySelector('.chatbot-input-field').focus();
+            document.querySelector('.chatbot-input-field').focus();
         } else {
             win.classList.add('hidden');
             trig.classList.remove('active');
@@ -243,6 +317,8 @@
         currentState  = 'welcome';
         inputLocked   = false;
         userInputData = { name: '', email: '', message: '', service: '', details: [] };
+        const input   = document.querySelector('.chatbot-input-field');
+        if (input) { input.disabled = false; input.value = ''; }
         const inner   = document.querySelector('.chatbot-messages-inner');
         if (inner) { inner.innerHTML = ''; runStep(); }
     }
@@ -254,7 +330,6 @@
         if (!inner) return;
         const msg = document.createElement('div');
         msg.className = `chat-msg ${isBot ? 'msg-bot' : 'msg-user'}`;
-        // Gère les sauts de ligne dans les messages codés en dur
         msg.innerHTML = `<div class="chat-msg-bubble">${text.replace(/\n/g, '<br>')}</div>`;
         inner.appendChild(msg);
         scrollBottom();
@@ -284,7 +359,6 @@
         if (el && el.parentNode) el.parentNode.removeChild(el);
     }
 
-    // Affiche un message bot avec délai de frappe proportionnel
     function botSay(text, then, extraDelay = 0) {
         const ind   = showTypingIndicator();
         const delay = typingDelay(text) + extraDelay;
@@ -295,28 +369,23 @@
         }, delay);
     }
 
-    // Affiche une réaction contextuelle puis enchaîne
     function reactThen(reactionKey, then) {
         const variants = REACTIONS[reactionKey];
-        if (variants && variants.length) {
-            botSay(pick(variants), then);
-        } else {
-            setTimeout(then, 300);
-        }
+        if (variants?.length) botSay(pick(variants), then);
+        else setTimeout(then, 300);
     }
 
+    // Désactive le champ pendant le traitement (évite double envoi)
     function lockInput() {
         inputLocked = true;
-        const ic    = document.querySelector('.chatbot-input-container');
         const input = document.querySelector('.chatbot-input-field');
-        if (ic)    ic.classList.add('hidden');
         if (input) input.disabled = true;
     }
 
     function unlockInput() {
         inputLocked = false;
         const input = document.querySelector('.chatbot-input-field');
-        if (input) input.disabled = false;
+        if (input) { input.disabled = false; input.focus(); }
     }
 
     function showOptions(options) {
@@ -330,19 +399,15 @@
             const btn = document.createElement('button');
             btn.className = 'chat-opt-btn';
             btn.innerHTML = `${opt.icon ? `<i data-lucide="${opt.icon}"></i>` : ''}<span>${t(opt.textKey, opt.value)}</span>`;
-
             btn.addEventListener('click', () => {
                 wrap.remove();
                 const label = t(opt.textKey, opt.value);
                 addMessage(label, false);
-
                 if (currentState === 'welcome') userInputData.service = opt.value;
                 else if (opt.value) userInputData.details.push(opt.value);
-
                 currentState = opt.nextStep;
                 reactThen(opt.nextStep, () => setTimeout(runStep, 300));
             });
-
             wrap.appendChild(btn);
         });
 
@@ -355,97 +420,83 @@
     // ── MOTEUR DE FLOW ─────────────────────────────────────────────
     function runStep() {
         const flow = CHAT_FLOW[currentState];
-        lockInput();
 
+        // États de saisie structurée : input déjà actif, on pose juste la question
         if (!flow) {
-            if      (currentState === 'collect_name')    showTextInput('q_collect_name');
-            else if (currentState === 'collect_email')   showTextInput('q_collect_email');
-            else if (currentState === 'collect_message') showTextInput('q_collect_message', true);
+            if      (currentState === 'collect_name')    askCollectName();
+            else if (currentState === 'collect_email')   askCollectEmail();
+            else if (currentState === 'collect_message') askCollectMessage();
             else if (currentState === 'whatsapp_direct') handleUrgentWhatsApp();
             else if (currentState === 'submit_data')     handleSubmitData();
             return;
         }
 
-        // FIX : message welcome : utilise getWelcomeMessage() si clé 'welcome'
-        const rawText = currentState === 'welcome'
-            ? getWelcomeMessage()
-            : t(flow.messageKey, '...');
-
+        const rawText = currentState === 'welcome' ? getWelcomeMessage() : t(flow.messageKey, '...');
         botSay(rawText, () => {
             if (flow.options?.length) showOptions(flow.options);
+            unlockInput(); // input disponible même pendant les étapes boutons
         });
     }
 
-    function showTextInput(messageKey, withSkip = false) {
-        const ic    = document.querySelector('.chatbot-input-container');
-        const input = document.querySelector('.chatbot-input-field');
+    // Questions de collecte — posent juste la question, l'input est déjà visible
+    function askCollectName() {
+        botSay(t('q_collect_name', 'Pour vous recontacter, quel est votre nom ? (optionnel)'), unlockInput);
+    }
 
-        // FIX : question email — ne jamais inclure le nom dans le message
-        // si le nom est vide (refus) ou absent
-        let msgText;
-        if (messageKey === 'q_collect_email') {
-            const hasName = userInputData.name && userInputData.name.trim().length > 0;
-            if (hasName) {
-                msgText = t('q_collect_email', `Merci ${userInputData.name} ! À quelle adresse e-mail souhaitez-vous recevoir notre réponse ?`);
-                msgText = formatString(msgText, { name: userInputData.name });
-            } else {
-                msgText = t('q_collect_email_anon', 'À quelle adresse e-mail souhaitez-vous recevoir notre réponse ?');
-            }
-        } else {
-            msgText = t(messageKey, '...');
-        }
+    function askCollectEmail() {
+        const hasName = userInputData.name?.trim().length > 0;
+        const msg = hasName
+            ? formatString(t('q_collect_email', 'Merci {name} ! À quelle adresse e-mail vous répondre ?'), { name: userInputData.name.split(' ')[0] })
+            : t('q_collect_email_anon', 'À quelle adresse e-mail souhaitez-vous recevoir notre réponse ?');
+        botSay(msg, unlockInput);
+    }
 
-        botSay(msgText, () => {
+    function askCollectMessage() {
+        botSay(t('q_collect_message', 'Avez-vous des précisions à ajouter ?'), () => {
             unlockInput();
-            ic.classList.remove('hidden');
-            input.value       = '';
-            input.placeholder = t('placeholder', 'Écrivez ici...');
-            input.focus();
+            // Bouton "Rien à ajouter" affiché EN PLUS de l'input (les deux coexistent)
+            const inner = document.querySelector('.chatbot-messages-inner');
+            const wrap  = document.createElement('div');
+            wrap.className = 'chatbot-options';
 
-            if (withSkip) {
-                const inner = document.querySelector('.chatbot-messages-inner');
-                const wrap  = document.createElement('div');
-                wrap.className = 'chatbot-options';
+            const skipBtn = document.createElement('button');
+            skipBtn.className = 'chat-opt-btn';
+            skipBtn.innerHTML = `<i data-lucide="corner-down-right"></i><span>${t('opt_nothing_to_add', 'Rien à ajouter')}</span>`;
+            skipBtn.addEventListener('click', () => {
+                if (inputLocked) return;
+                wrap.remove();
+                lockInput();
+                addMessage(t('opt_nothing_to_add', 'Rien à ajouter'), false);
+                userInputData.message = '';
+                currentState = 'submit_data';
+                setTimeout(runStep, 400);
+            });
 
-                const skipBtn = document.createElement('button');
-                skipBtn.className = 'chat-opt-btn';
-                skipBtn.innerHTML = `<i data-lucide="corner-down-right"></i><span>${t('opt_nothing_to_add', 'Rien à ajouter')}</span>`;
-
-                skipBtn.addEventListener('click', () => {
-                    if (inputLocked) return;   // FIX : verrou anti double-submit
-                    wrap.remove();
-                    lockInput();               // FIX : verrouille IMMÉDIATEMENT
-                    addMessage(t('opt_nothing_to_add', 'Rien à ajouter'), false);
-                    userInputData.message = '';
-                    currentState = 'submit_data';
-                    setTimeout(() => {
-                        unlockInput();
-                        runStep();
-                    }, 400);
-                });
-
-                wrap.appendChild(skipBtn);
-                inner.appendChild(wrap);
-                updateLucideIcons();
-                scrollBottom();
-            }
+            wrap.appendChild(skipBtn);
+            inner.appendChild(wrap);
+            updateLucideIcons();
+            scrollBottom();
         });
     }
+
+
+    // ── GESTIONNAIRE UNIQUE DE SAISIE LIBRE ───────────────────────
+    // Appelé à CHAQUE envoi, quel que soit l'état courant.
+    // Distingue : états structurés (nom/email/message) vs états à boutons (NLP).
 
     function handleTextInputSubmit() {
-        if (inputLocked) return;   // FIX : verrou anti double-submit
+        if (inputLocked) return;
 
-        const ic    = document.querySelector('.chatbot-input-container');
         const input = document.querySelector('.chatbot-input-field');
         const val   = input.value.trim();
         if (!val) return;
 
+        input.value = '';
         lockInput();
         addMessage(val, false);
 
+        // ── États structurés : traitement direct ──────────────────
         if (currentState === 'collect_name') {
-
-            // FIX : détection refus / saisie hostile
             if (isRefusal(val)) {
                 userInputData.name = '';
                 botSay("Pas de problème, on continue sans votre nom.", () => {
@@ -454,31 +505,53 @@
                 });
             } else {
                 userInputData.name = val;
-                // Utilise juste le premier mot comme prénom (évite "Enchanté, Jean-Paul Dupont !")
                 const prenom = val.split(' ')[0];
                 botSay(`Enchanté, ${prenom} ! 😊`, () => {
                     currentState = 'collect_email';
                     setTimeout(runStep, 300);
                 });
             }
+            return;
+        }
 
-        } else if (currentState === 'collect_email') {
+        if (currentState === 'collect_email') {
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-                botSay(t('invalid_email', 'Hmm, cette adresse e-mail ne semble pas valide. Pouvez-vous la vérifier ?'), () => {
-                    unlockInput();
-                    ic.classList.remove('hidden');
-                    input.focus();
-                });
+                botSay(t('invalid_email', 'Hmm, cette adresse e-mail ne semble pas valide. Pouvez-vous la vérifier ?'), unlockInput);
             } else {
                 userInputData.email = val;
                 currentState = 'collect_message';
                 botSay(t('ack_email', 'Reçu !'), () => setTimeout(runStep, 300));
             }
+            return;
+        }
 
-        } else if (currentState === 'collect_message') {
+        if (currentState === 'collect_message') {
             userInputData.message = val;
             currentState = 'submit_data';
             setTimeout(runStep, 400);
+            return;
+        }
+
+        // ── Tous les autres états : NLP libre ─────────────────────
+        const intent = detectFreeIntent(val);
+
+        if (intent) {
+            // Reconnu → réaction + redirection dans le flow
+            intent.action();
+            botSay(intent.ack, () => setTimeout(runStep, 400));
+        } else {
+            // Non reconnu → réponse humaine + on repose les boutons du step actuel
+            const fallbacks = [
+                "Je ne suis pas sûr de bien comprendre — vous pouvez utiliser les boutons ou me reformuler votre besoin 😊",
+                "Hmm, je ne saisis pas tout à fait. Pouvez-vous préciser ? Ou choisissez une option ci-dessus.",
+                "Je préfère vous orienter correctement — dites-moi simplement ce qui vous amène ou cliquez sur une option.",
+            ];
+            botSay(pick(fallbacks), () => {
+                unlockInput();
+                // Réaffiche les boutons du step courant s'il y en a
+                const flow = CHAT_FLOW[currentState];
+                if (flow?.options?.length) showOptions(flow.options);
+            });
         }
     }
 
@@ -490,16 +563,15 @@
             const inner = document.querySelector('.chatbot-messages-inner');
             const wrap  = document.createElement('div');
             wrap.className = 'chatbot-options';
-
             const waBtn = document.createElement('a');
             waBtn.className = 'chat-opt-btn cta-whatsapp-link';
             waBtn.href      = "https://wa.me/41783535360?text=Bonjour%2C%20j'ai%20une%20demande%20urgente%20concernant%20vos%20services.";
             waBtn.target    = '_blank';
             waBtn.innerHTML = `${whatsappSVG}<span>${t('cta_whatsapp', 'Discuter sur WhatsApp')}</span>`;
             wrap.appendChild(waBtn);
-
             inner.appendChild(wrap);
             scrollBottom();
+            unlockInput();
         });
     }
 
@@ -523,10 +595,10 @@
                 if (msgTextarea) msgTextarea.value = messageBody;
 
                 if (subjectSelect) {
-                    if (serviceName.includes('impôt') || serviceName.includes('Tax'))        subjectSelect.value = 'impots';
-                    else if (serviceName.includes('Compta') || serviceName.includes('Acc'))  subjectSelect.value = 'comptabilite';
-                    else if (serviceName.includes('admin') || serviceName.includes('Admin')) subjectSelect.value = 'admin';
-                    else                                                                      subjectSelect.value = 'autre';
+                    if      (serviceName.includes('impôt') || serviceName.includes('Tax'))        subjectSelect.value = 'impots';
+                    else if (serviceName.includes('Compta') || serviceName.includes('Acc'))       subjectSelect.value = 'comptabilite';
+                    else if (serviceName.includes('admin')  || serviceName.includes('Admin'))     subjectSelect.value = 'admin';
+                    else                                                                           subjectSelect.value = 'autre';
                 }
 
                 const submitBtn = document.getElementById('form-submit-btn');
@@ -550,8 +622,7 @@
         const lastMsg = inner?.lastChild;
         if (lastMsg?.textContent?.includes('envoie')) lastMsg.remove();
 
-        // Message personnalisé si on a le nom, générique sinon
-        const hasName    = userInputData.name && userInputData.name.trim().length > 0;
+        const hasName    = userInputData.name?.trim().length > 0;
         const prenom     = hasName ? userInputData.name.split(' ')[0] : '';
         const successMsg = hasName
             ? t('success', `Votre demande a bien été envoyée, ${prenom} ! 🎉 On revient vers vous très rapidement.`)
@@ -559,7 +630,7 @@
 
         botSay(successMsg.replace('{name}', prenom), () => {
             botSay(
-                t('success_follow', 'En attendant, vous pouvez aussi réserver un créneau ou nous écrire sur WhatsApp :'),
+                t('success_follow', 'En attendant, vous pouvez réserver un créneau ou nous écrire sur WhatsApp :'),
                 () => {
                     const wrap = document.createElement('div');
                     wrap.className = 'chatbot-options chatbot-final-ctas';
@@ -581,6 +652,7 @@
                     inner.appendChild(wrap);
                     updateLucideIcons();
                     scrollBottom();
+                    unlockInput();
                 },
                 400
             );
@@ -594,9 +666,7 @@
     } else {
         initDOM();
     }
-
-    setTimeout(initDOM, 500); // fallback si i18n chargé après le script
-
+    setTimeout(initDOM, 500);
     window.resetChatbot = restartConversation;
 
 })();

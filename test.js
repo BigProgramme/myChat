@@ -1,6 +1,9 @@
 // /js/chatbot.js
 // Malongui Consulting — Chatbot Préqualification
 // v4 : input toujours visible + NLP libre à tout moment du flow
+#C9A84C — le doré principal (boutons, accents)
+#E8D5A0 — le doré clair (logo, textes sur fond sombre)
+#8B6914 — le doré foncé (hover)
 
 (function () {
 
